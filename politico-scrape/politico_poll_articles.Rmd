@@ -1,0 +1,93 @@
+---
+title: "POLITICO Mentions of Polling"
+output: html_notebook
+---
+POLITICO Magazine recently published an article titled [The Nate Silver Effect is Changing Journalism. Is That Good?](http://www.politico.com/magazine/story/2017/10/05/nate-silver-effect-journalism-polling-five-thirty-eight-215683) in which author Benjamin Toff argues that journalism has gotten too reliant on reporting poll results to interpret campaigns.
+
+I scraped POLITICO's website to see how often they mentioned the word "Poll" in a story. Overall POLITICO wrote 43,000 stories mentioning polls. The spikes in polling stories came around October of election years. Smaller spikes appear in January of presidential election years, reflecting poll-driven coverage of primary elections. 
+
+```{r}
+library(rvest)
+library(dplyr)
+
+dates <- list()
+for(i in seq(1,2174)){
+  url = paste0("http://www.politico.com/search/",i,"?q=poll")
+  articles <- read_html(url)%>%
+    html_nodes('p time')%>%
+    html_attr('datetime')
+  dates[[i]] <- articles
+}
+```
+Next I scraped all articles containing a period - hopefully capturing all articles published on the site - using a similar method. 
+
+```{r}
+# This took a long, long, long time. Feel free to let me know of a better way to do this!
+all_articles <- list()
+for(i in seq(1,15501)){
+  url = paste0("http://www.politico.com/search/",i,"?q=.")
+  articles <- read_html(url)%>%
+    html_nodes('p time')%>%
+    html_attr('datetime')
+  all_articles[[i]] <- articles
+}
+```
+
+Condense each set of date vectors to days and consolidated them into a single dataframe. I wrote the data to a csv file so I could come back to this data without re-scraping POLITICO's site. 
+```{r}
+library(lubridate)
+
+condense_to_days <- function(l){
+  date_dfs <- list()
+  for(i in seq(1,length(l))){
+    date_dfs[[i]] <- data.frame(date = l[[i]])
+  }
+
+  article_dates <- bind_rows(date_dfs)
+  
+  article_dates <- article_dates%>%
+    mutate(date_day = round_date(as.Date(substr(date, 1,10), format = '%Y-%m-%d'), unit = 'day'))%>%
+    group_by(date_day)%>%
+    summarise(n = n())
+
+  return(article_dates)  
+} 
+
+poll_dates <- condense_to_days(dates)
+all_dates <- condense_to_days(all_articles)
+
+article_mentions <- full_join(
+  poll_dates%>%dplyr::select(date_day, poll = n),
+  all_dates%>%dplyr::select(date_day, all = n)
+)
+
+write.csv(article_mentions, 'politico_data.csv')
+```
+
+```{r}
+library(readr)
+politico_day <- read_csv('politico_data.csv')
+```
+
+Finally, here is the code to replicate the chart. The yaztheme package is not mandatory to execute the code successfully - it's just some aesthetic effects on the chart and my preferred color scheme. 
+```{r, fig.width=10, fig.height=4}
+library(ggplot2)
+library(yaztheme)
+ggplot(politico_day%>%
+         mutate(week = round_date(date_day, unit = 'week'))%>%
+         group_by(week)%>%
+         summarise(poll = sum(poll, na.rm = T),
+                   all = sum(all, na.rm = T),
+                   prop = round((poll*100)/all)), 
+       aes(x = week, y = prop))+
+  geom_line(color = yaz_cols[2])+
+  theme_yaz()+
+  labs(title = 'Percentage of POLITICO Stories Mentioning the Word "Poll" Over Time',
+       y = element_blank(), x = element_blank(),
+       caption = 'Chart: Josh Yazman | @jyazman2012')+
+  geom_hline(yintercept = 13.85, color = yaz_cols[4], size = 1.5, linetype = 'dashed')+
+  annotate(geom = 'text', x = as.Date('2009-06-01'), y = 18,label = 'Mean %')+
+  annotate(geom = 'segment', x = as.Date('2009-06-01'), y = 17,
+           xend = as.Date('2009-02-01'), yend = 13.85, linetype = 'dashed')
+  
+```
