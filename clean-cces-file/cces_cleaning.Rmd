@@ -1,0 +1,18 @@
+---
+title: "CCES Cleaning"
+output: html_notebook
+---
+
+This data is to be used in my Analytics 101 course at General Assembly. The idea of the class is to use some data to answer questions about an issue you care about. The CCES data was too big to import into Google Sheets, so I'm using the following R code to clean it up a bit. The raw data comes from [here](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi%3A10.7910/DVN/GDF6Z0) and was in my Downloads folder when the code was written. 
+```{r}
+setwd('/Users/joshyazman/Downloads/')
+library(readr)
+library(dplyr)
+
+raw_data <- read_tsv('CCES16_Common_OUTPUT_Jul2017_VV.tab')%>%
+  select(commonweight_vv, commonweight_vv_post, birthyr, gender, educ, edloan,
+         race, votereg, CC16_301a, CC16_301c,CC16_301d, CC16_301h,
+         CC16_301m, CC16_330d, CC16_330a, CC16_330e, CC16_331_1, CC16_331_3,
+         CC16_331_8, CC16_333a, CC16_333b, CC16_337_3,CC16_337_2, CC16_337_1, CC16_340a)
+write.csv(raw_data, 'cces_an_101.csv', row.names = F)
+```
