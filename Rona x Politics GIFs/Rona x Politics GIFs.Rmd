@@ -9,11 +9,6 @@ library(gganimate)
 library(tidycensus)
 options(scipen = 999)
 
-all_fifty_states <- c(state.abb,'DC')
-total_population <- get_acs(state = all_fifty_states, geography = "county", variables = "B01001_001", year = 2018)%>%
-  mutate(pop_total = estimate)%>%
-  select(state_county_fips = GEOID, pop_total)
-
 theme_bluelabs <- theme_minimal()+
   theme(text = element_text(family = 'Avenir Next', size = 12),
         plot.title = element_text(hjust = 0.5, face=c('bold')),
@@ -45,20 +40,14 @@ apply_labels <- function(x, type_of = c('gen','swing')){
   return(new_x)
 }
 
-incidence_county_day_init <- read_csv('/Users/joshyazman/Desktop/covid-political-analysis/county-level-tabs/combined_nyt_cnty.csv')%>%
-  mutate(twoway_16_label = apply_labels(twoway_16_cat),
-         twoway_08_label = apply_labels(twoway_08_cat),
-         twoway_12_label = apply_labels(twoway_12_cat),
-         obama_trump_label = apply_labels(obama_trump_cat,'swing'),
-         incidence_week = lubridate::floor_date(date,'weeks'),
-         state_name = tools::toTitleCase(state_name))%>%
-  filter(state_county_fips != '51019',
-         date >= as.Date('2020-03-01'))%>%
-  left_join(total_population)
+all_fifty_states <- c(state.abb,'DC')
+total_population <- get_acs(state = all_fifty_states, geography = "county", variables = "B01001_001", year = 2018)%>%
+  mutate(pop_total = estimate)%>%
+  select(state_county_fips = GEOID, pop_total)
 
-View(incidence_county_day_init)
+incidence_county_day_init <- read_csv('https://raw.githubusercontent.com/joshyazman/random-projects/master/Rona%20x%20Politics%20GIFs/combined_nyt_cnty.csv')
 
-cnty <- read_delim('/Users/joshyazman/Desktop/covid-political-analysis/county-level-tabs/countypres_2000-2016.tab', delim = '\t')%>%
+county_results <- read_delim('https://raw.githubusercontent.com/joshyazman/random-projects/master/Rona%20x%20Politics%20GIFs/countypres_2000-2016.tab', delim = '\t')%>%
   filter(party %in% c('democrat','republican'),
          year %in% c(2008,2012,2016),
          office == 'President')%>%
@@ -68,34 +57,50 @@ cnty <- read_delim('/Users/joshyazman/Desktop/covid-political-analysis/county-le
   filter(party == 'democrat')%>%
   mutate(dem_twoway = candidatevotes/twoway_votes,
          state_name = tolower(state),
-         county_fips = stringr::str_pad(FIPS,5,side = 'left', pad = '0'))%>%
-  group_by(year, state_name, state_code = state_po, county_fips)%>%
+         state_county_fips = stringr::str_pad(FIPS,5,side = 'left', pad = '0'))%>%
+  group_by(year, state_name, state_code = state_po, state_county_fips)%>%
   summarise(dem_votes = sum(candidatevotes), tot_votes = sum(totalvotes), twoway_votes = sum(twoway_votes))%>%
   mutate(dem_twoway = dem_votes/twoway_votes)
+
+incidence_by_week <- total_population%>%
+  inner_join(county_results)%>%
+  left_join(incidence_county_day_init)%>%
+  mutate(twoway_16_label = apply_labels(twoway_16_cat),
+         obama_trump_label = apply_labels(obama_trump_cat,'swing'),
+         incidence_week = lubridate::floor_date(date,'weeks'))%>%
+  filter(state_county_fips != '51019',
+         date >= as.Date('2020-03-01'))%>%
+  left_join(total_population)
+
+View(incidence_county_day_init)
 ```
 
 Definte the plotting function
 ```{r}
 # Vectors of possible states/regions to filter to
-all_states <- c('US',unique(incidence_county_day_init$state_name))
-all_regions <- c('US',unique(incidence_county_day_init$region))
+all_states <- c('US',unique(incidence_by_week$state_code))
+all_regions <- c('US',unique(incidence_by_week$region))
 
 plot_outcomes <- function(state_code_filter = all_states, 
                           region_filter = all_regions,
                           pop_adjustment = c('n','y')) {
   if(state_code_filter == 'US' & region_filter == 'US') {
-    incidence_county_day_init_filtered <- incidence_county_day_init
+    incidence_county_day_init_filtered <- incidence_by_week
+    
     subtitle_text <- element_blank()
+    
   } else if (state_code_filter != 'US' & region_filter == 'US') {
-    incidence_county_day_init_filtered <- incidence_county_day_init%>%
-      filter(state_name %in% state_code_filter)
+    incidence_county_day_init_filtered <- incidence_by_week%>%
+      filter(state_code %in% state_code_filter)
     
     subtitle_text <- paste0('States Included: ', paste(state_code_filter, collapse = ', '))
+    
   } else if (state_code_filter == 'US' & region_filter != 'US') {
-    incidence_county_day_init_filtered <- incidence_county_day_init%>%
+    incidence_county_day_init_filtered <- incidence_by_week%>%
       filter(region %in% region_filter)
     
     subtitle_text <- paste0('Regions Included: ', paste(region_filter, collapse = ', '))
+    
   } else {
     print(paste0('Options for states are: ', all_states, collapse(', ')))
     print(paste0('Options for regions are: ', all_regions, collapse(', ')))
@@ -104,64 +109,64 @@ plot_outcomes <- function(state_code_filter = all_states,
   
   weekly_by_hrc <- incidence_county_day_init_filtered %>%
     mutate(metric = 'Cases by 2016 Clinton Support')%>%
-    select(date, incidence_week, metric, state_county_fips, 
+    select(incidence_week, metric, state_county_fips, 
            result = twoway_16_label, order_var = twoway_16_cat, 
-           new_cases, total_deaths, n_rvs)%>%
+           new_cases, pop_total)%>%
     group_by(metric, incidence_week, result, order_var)%>%
-    summarise(total_deaths = sum(total_deaths), ## Don't actualy use this until you figure out how to properly roll it up
-              new_cases = sum(new_cases),
-              new_cases_per_voter = sum(new_cases)/sum(n_rvs))%>%
+    summarise(new_cases_per_cap = sum(new_cases)/sum(pop_total),
+              new_cases = sum(new_cases))%>%
     group_by(metric, incidence_week)%>%
     mutate(pct_new_cases = new_cases/sum(new_cases),
-           pct_new_cases_per_voter = new_cases_per_voter/sum(new_cases_per_voter),
-           pct_total_deaths = total_deaths/sum(total_deaths))%>%
+           pct_new_cases_per_voter = new_cases_per_cap/sum(new_cases_per_cap))%>%
     ungroup()
   
   weekly_by_ots <- incidence_county_day_init_filtered %>%
-    mutate(metric = 'Cases by Obama - Trump Swing')%>%
-    select(date, incidence_week, metric, 
-           state_county_fips, result = obama_trump_label, 
-           order_var = obama_trump_cat, new_cases, 
-           total_deaths, n_rvs)%>%
+    mutate(metric = 'Cases by Obama - Trump Swing') %>%
+    select(incidence_week, metric, state_county_fips, 
+           result = obama_trump_label, order_var = obama_trump_cat, 
+           new_cases, pop_total)%>%
     group_by(metric, incidence_week, result, order_var)%>%
-    summarise(total_deaths = sum(total_deaths), ## Don't actualy use this until you figure out how to properly roll it up
-              new_cases = sum(new_cases),
-              new_cases_per_voter = sum(new_cases)/sum(n_rvs))%>%
+    summarise(new_cases_per_cap = sum(new_cases)/sum(pop_total),
+              new_cases = sum(new_cases))%>%
     group_by(metric, incidence_week)%>%
     mutate(pct_new_cases = new_cases/sum(new_cases),
-           pct_new_cases_per_voter = new_cases_per_voter/sum(new_cases_per_voter),
-           pct_total_deaths = total_deaths/sum(total_deaths))%>%
+           pct_new_cases_per_voter = new_cases_per_cap/sum(new_cases_per_cap))%>%
     ungroup()
+  
+  weekly_spine <- weekly_by_hrc%>%
+    distinct(incidence_week, order_var)
   
   pop_by_hrc <- incidence_county_day_init_filtered %>%
     mutate(metric = 'Population by 2016 Clinton Support')%>%
-    select(date, incidence_week, metric, state_county_fips, 
-           result = twoway_16_label, order_var = twoway_16_cat, 
-           new_cases, total_deaths, n_rvs, pop_total)%>%
-    group_by(metric, incidence_week, result, order_var)%>%
-    summarise(total_deaths = sum(total_deaths), ## Don't actualy use this until you figure out how to properly roll it up
-              new_cases = max(pop_total),
-              new_cases_per_voter = sum(new_cases)/sum(pop_total))%>%
-    group_by(metric, incidence_week)%>%
-    mutate(pct_new_cases = new_cases/sum(new_cases),
-           pct_new_cases_per_voter = new_cases_per_voter/sum(new_cases_per_voter),
-           pct_total_deaths = total_deaths/sum(total_deaths))%>%
-    ungroup()
+    distinct(metric, result = twoway_16_label, 
+             order_var = twoway_16_cat, 
+             pop_total, state_county_fips)%>%
+    group_by(metric, result, order_var)%>%
+    summarise(pop_total = sum(pop_total))%>%
+    group_by(metric)%>%
+    mutate(pct_of_pop = pop_total/sum(pop_total))%>%
+    ungroup()%>%
+    right_join(weekly_spine, by = 'order_var')%>%
+    select(metric, incidence_week, result, order_var, 
+           new_cases_per_cap = pop_total, new_cases = pop_total,
+           pct_new_cases = pct_of_pop, 
+           pct_new_cases_per_voter = pct_of_pop)
   
   pop_by_ots <- incidence_county_day_init_filtered %>%
     mutate(metric = 'Population by Obama - Trump Swing')%>%
-    select(date, incidence_week, metric, state_county_fips, 
-           result = obama_trump_label, order_var = obama_trump_cat, 
-           new_cases, total_deaths, n_rvs, pop_total)%>%
-    group_by(metric, incidence_week, result, order_var)%>%
-    summarise(total_deaths = sum(total_deaths), ## Don't actualy use this until you figure out how to properly roll it up
-              new_cases = max(pop_total),
-              new_cases_per_voter = sum(new_cases)/sum(pop_total))%>%
-    group_by(metric, incidence_week)%>%
-    mutate(pct_new_cases = new_cases/sum(new_cases),
-           pct_new_cases_per_voter = new_cases_per_voter/sum(new_cases_per_voter),
-           pct_total_deaths = total_deaths/sum(total_deaths))%>%
-    ungroup()
+    distinct(metric, result = obama_trump_label, 
+             order_var = obama_trump_cat, 
+             pop_total, state_county_fips)%>%
+    group_by(metric, result, order_var)%>%
+    summarise(pop_total = sum(pop_total))%>%
+    group_by(metric)%>%
+    mutate(pct_of_pop = pop_total/sum(pop_total))%>%
+    ungroup()%>%
+    right_join(weekly_spine, by = 'order_var')%>%
+    select(metric, incidence_week, result, order_var, 
+           new_cases_per_cap = pop_total, new_cases = pop_total,
+           pct_new_cases = pct_of_pop, 
+           pct_new_cases_per_voter = pct_of_pop)
   
   all_metrics <- list(weekly_by_hrc, weekly_by_ots, pop_by_hrc, pop_by_ots)
   
@@ -210,19 +215,4 @@ plot_outcomes(region_filter = c('Deep South','Peripheral South'))
 plot_outcomes(region_filter = c('Deep South'))
 plot_outcomes(region_filter = c('Plains'))
 plot_outcomes(region_filter = c('Rocky Mountain'))
-```
-
-
-# Make a static plot of cases by day and category
-```{r, fig.width=12}
-tot 
-
-tot_anim <- animate(tot, width = 800, height = 350, end_pause = 2, start_pause = 2)
-anim_save(filename = '/Users/joshyazman/Desktop/covid-political-analysis/Share of Weekly New Cases by Election Result.gif')
-
-pop_adj <- 
-
-pop_adj_anim <- animate(pop_adj, width = 800, height = 350, end_pause = 2, start_pause = 2)
-anim_save(filename = '/Users/joshyazman/Desktop/covid-political-analysis/Share of Weekly New Cases per Voter by Election Result.gif')
-
 ```
